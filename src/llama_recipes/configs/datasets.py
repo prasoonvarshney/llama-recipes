@@ -33,9 +33,19 @@ class custom_dataset:
     train_split: str = "train"
     test_split: str = "validation"
     data_path: str = ""
-    
+
+
 @dataclass
 class llamaguard_toxicchat_dataset:
     dataset: str = "llamaguard_toxicchat_dataset"
     train_split: str = "train"
     test_split: str = "test"
+
+
+@dataclass
+class generic_sft_dataset:
+    dataset: str = "generic_sft_dataset"
+    train_split: str = "train"
+    test_split: str = "validation"
+    train_data_path: str = "PATH/to/training_data/dataset_train.jsonl"
+    test_data_path: str = "PATH/to/training_data/dataset_val.jsonl"

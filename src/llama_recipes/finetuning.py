@@ -27,7 +27,7 @@ from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
 from llama_recipes.configs import fsdp_config as FSDP_CONFIG
 from llama_recipes.configs import train_config as TRAIN_CONFIG
-from llama_recipes.configs import quantization_config  as QUANTIZATION_CONFIG
+from llama_recipes.configs import quantization_config as QUANTIZATION_CONFIG
 from llama_recipes.data.concatenator import ConcatDataset
 from llama_recipes.policies import AnyPrecisionAdamW, apply_fsdp_checkpointing
 
@@ -53,7 +53,8 @@ from llama_recipes.utils.train_utils import (
 from accelerate.utils import is_xpu_available
 from warnings import warn
 
-def setup_wandb(train_config, fsdp_config, **kwargs):
+
+def setup_wandb(train_config, fsdp_config, run_name, **kwargs):
     try:
         import wandb
     except ImportError:
@@ -65,10 +66,12 @@ def setup_wandb(train_config, fsdp_config, **kwargs):
     wandb_config = WANDB_CONFIG()
     update_config(wandb_config, **kwargs)
     init_dict = dataclasses.asdict(wandb_config)
+    init_dict["name"] = run_name
     run = wandb.init(**init_dict)
     run.config.update(train_config)
     run.config.update(fsdp_config, allow_val_change=True)
     return run
+
 
 def main(**kwargs):
     # Update the configuration for the training and sharding process
@@ -95,13 +98,7 @@ def main(**kwargs):
         clear_gpu_cache(local_rank)
         setup_environ_flags(rank)
 
-    wandb_run = None
-
-    if train_config.use_wandb:
-        if not train_config.enable_fsdp or rank==0:
-            wandb_run = setup_wandb(train_config, fsdp_config, **kwargs)
-    
-    #setting quantization configs
+    # setting quantization configs
     bnb_config = None
     if train_config.quantization:
         if type(train_config.quantization) == type(True):
@@ -124,6 +121,7 @@ def main(**kwargs):
         attn_implementation="sdpa" if train_config.use_fast_kernels else None,
         device_map="auto" if train_config.quantization and not train_config.enable_fsdp else None,
         torch_dtype=torch.float16 if train_config.use_fp16 else torch.bfloat16,
+        cache_dir=train_config.cache_dir,
     )
 
     # Load the tokenizer and add special tokens
@@ -141,7 +139,7 @@ def main(**kwargs):
     # Convert the model to bfloat16 if fsdp and pure_bf16 is enabled
     if train_config.enable_fsdp and fsdp_config.pure_bf16 and not train_config.quantization:
         model.to(torch.bfloat16)
-        
+
     if train_config.use_peft:
         # Load the pre-trained peft model checkpoint and setup its configuration
         if train_config.from_peft_checkpoint:
@@ -151,8 +149,6 @@ def main(**kwargs):
         else:
             peft_config = generate_peft_config(train_config, kwargs)
             model = get_peft_model(model, peft_config)
-        if wandb_run:
-            wandb_run.config.update(peft_config)
         model.print_trainable_parameters()
 
     hsdp_device_mesh_plan = None
@@ -160,7 +156,7 @@ def main(**kwargs):
         hsdp_device_mesh_plan = hsdp_device_mesh(replica_group_size=fsdp_config.replica_group_size, sharding_group_size=fsdp_config.sharding_group_size)
         print("HSDP device mesh is ready")
 
-    #setting up FSDP if enable_fsdp is enabled
+    # setting up FSDP if enable_fsdp is enabled
     if train_config.enable_fsdp:
         if not train_config.use_peft and train_config.freeze_layers:
             freeze_transformer_layers(model, train_config.num_freeze_layers)
@@ -175,7 +171,7 @@ def main(**kwargs):
             device_id = torch.cuda.current_device()
         model = FSDP(
             model,
-            auto_wrap_policy= my_auto_wrapping_policy if train_config.use_peft else wrapping_policy,
+            auto_wrap_policy=my_auto_wrapping_policy if train_config.use_peft else wrapping_policy,
             cpu_offload=CPUOffload(offload_params=True) if fsdp_config.fsdp_cpu_offload else None,
             mixed_precision=mixed_precision_policy if not fsdp_config.pure_bf16 else None,
             sharding_strategy=fsdp_config.sharding_strategy,
@@ -186,10 +182,10 @@ def main(**kwargs):
             param_init_fn=(lambda module: module.to_empty(device=torch.device("cuda"), recurse=False))
             if train_config.low_cpu_fsdp and rank != 0 else None,
         )
-        if fsdp_config.fsdp_activation_checkpointing:            
+        if fsdp_config.fsdp_activation_checkpointing:
             model.enable_input_require_grads()
             model.gradient_checkpointing_enable()
-            apply_fsdp_checkpointing(model)                      
+            apply_fsdp_checkpointing(model)
     elif not train_config.quantization and not train_config.enable_fsdp:
         if is_xpu_available():
             model.to("xpu:0")
@@ -198,7 +194,7 @@ def main(**kwargs):
 
     dataset_config = generate_dataset_config(train_config, kwargs)
 
-     # Load and preprocess the dataset for training and validation
+    # Load and preprocess the dataset for training and validation
     dataset_train = get_preprocessed_dataset(
         tokenizer,
         dataset_config,
@@ -210,8 +206,22 @@ def main(**kwargs):
     dataset_val = get_preprocessed_dataset(
         tokenizer,
         dataset_config,
-        split="test",
+        split="validation",
     )
+
+    wandb_run = None
+    descriptive_run_identifier = f"{train_config.model_name.split('/')[-1].lower()}{'_q8' if train_config.quantization else ''}_bs{train_config.batch_size_training}{train_config.batching_strategy}_data-{train_config.dataset}{len(dataset_train)}-{len(dataset_val)}_epochs{train_config.num_epochs}_initlr{train_config.lr}"
+    if train_config.use_wandb:
+        if not train_config.enable_fsdp or rank == 0:
+            wandb_run = setup_wandb(
+                train_config, fsdp_config,
+                run_name=descriptive_run_identifier, **kwargs
+            )
+            if wandb_run and train_config.use_peft:
+                wandb_run.config.update(peft_config)
+    train_config.output_dir = os.path.join(train_config.output_dir, descriptive_run_identifier)
+    os.makedirs(train_config.output_dir, exist_ok=True)
+
     if not train_config.enable_fsdp or rank == 0:
         print(f"--> Validation Set Length = {len(dataset_val)}")
 
@@ -278,11 +288,12 @@ def main(**kwargs):
         rank if train_config.enable_fsdp else None,
         wandb_run,
     )
-    if not train_config.enable_fsdp or rank==0:
+    if not train_config.enable_fsdp or rank == 0:
         [print(f'Key: {k}, Value: {v}') for k, v in results.items()]
         if train_config.use_wandb:
-            for k,v in results.items():
+            for k, v in results.items():
                 wandb_run.summary[k] = v
+
 
 if __name__ == "__main__":
     fire.Fire(main)
