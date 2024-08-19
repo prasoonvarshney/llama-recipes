@@ -56,7 +56,8 @@ DATASET_PREPROC = {
     "samsum_dataset": get_samsum_dataset,
     "custom_dataset": get_custom_dataset,
     "llamaguard_toxicchat_dataset": get_llamaguard_toxicchat_dataset,
-
+    "vitc_dataset": get_vitaminc_dataset,
+    "ragtruth_dataset": get_ragtruth_dataset,
 }
 
 

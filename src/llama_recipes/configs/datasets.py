@@ -39,3 +39,12 @@ class llamaguard_toxicchat_dataset:
     dataset: str = "llamaguard_toxicchat_dataset"
     train_split: str = "train"
     test_split: str = "test"
+
+
+@dataclass
+class vitaminc_dataset:
+    dataset: str = "vitaminc_dataset"
+    train_split: str = "train"
+    test_split: str = "val"
+    train_data_path: str = "/lustre/fsw/portfolios/llmservice/users/prasoonv/workspace/grounding-guardrails/training_data/vitc_train.jsonl"
+    test_data_path: str = "/lustre/fsw/portfolios/llmservice/users/prasoonv/workspace/grounding-guardrails/training_data/vitc_val.jsonl"
