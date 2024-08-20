@@ -21,7 +21,7 @@ import json
 
 
 from llama_recipes.model_checkpointing import save_model_checkpoint, save_model_and_optimizer_sharded, save_optimizer_checkpoint, save_peft_checkpoint
-from llama_recipes.policies import fpSixteen,bfSixteen, get_llama_wrapper
+from llama_recipes.policies import fpSixteen, bfSixteen, get_llama_wrapper
 from llama_recipes.utils.memory_utils import MemoryTrace
 from accelerate.utils import is_xpu_available, is_ccl_available
 from llama_recipes.utils.flop_utils import FlopMeasure
@@ -67,7 +67,7 @@ def profile(cfg, local_rank=None):
         yield None
 
 
-def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_scheduler, gradient_accumulation_steps, train_config, fsdp_config=None, local_rank=None, rank=None, wandb_run=None):
+def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_scheduler, gradient_accumulation_steps, train_config, fsdp_config=None, local_rank=None, rank=None, wandb_run=None):
     """
     Trains the model on the given dataloader
 
@@ -93,8 +93,6 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
     if train_config.enable_fsdp:
         world_size = int(os.environ["WORLD_SIZE"])
 
-
-
     autocast = torch.cuda.amp.autocast if train_config.use_fp16 else nullcontext
     train_prep = []
     train_loss = []
@@ -102,9 +100,10 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
     val_loss =[]
 
     if train_config.save_metrics:
-        if not os.path.exists(train_config.output_dir):
-            os.makedirs(train_config.output_dir, exist_ok=True)
-        metrics_filename = f"{train_config.output_dir}/metrics_data_{local_rank}-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
+        timestamped_folder_name = datetime.now().strftime('%Y-%m-%d--%H-%M-%S')
+        os.makedirs(train_config.output_dir, exist_ok=True)
+        os.makedirs(f"{train_config.output_dir}/{timestamped_folder_name}", exist_ok=True)
+        metrics_filename = f"{train_config.output_dir}/{timestamped_folder_name}/metrics_data_rank{local_rank}.json"
         train_step_perplexity = []
         train_step_loss = []
         val_step_loss = []
@@ -186,11 +185,12 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                     if train_config.flop_counter and profile_context.is_done():
                         TFlops = profile_context.get_flops_per_sec() / 1e12
                     if wandb_run:
-                        if not train_config.enable_fsdp or rank==0:
+                        if not train_config.enable_fsdp or rank == 0:
                             wandb_run.log({
                                 'train/epoch': epoch + 1,
                                 'train/step': epoch * len(train_dataloader) + step,
                                 'train/loss': loss.detach().float(),
+                                'train/learning_rate': optimizer.param_groups[0]['lr'],
                             })
 
                     pbar.set_description(f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})")
@@ -214,7 +214,7 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
         train_prep.append(float(train_perplexity))
         train_loss.append(float(train_epoch_loss))
 
-        if not train_config.enable_fsdp or rank==0:
+        if not train_config.enable_fsdp or rank == 0:
             memtrace.print_stats()
 
         # Update the learning rate as needed
@@ -231,13 +231,13 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                     dist.barrier()
                 if train_config.use_peft:
                     if train_config.enable_fsdp:
-                        if rank==0:
+                        if rank == 0:
                             print(f"we are about to save the PEFT modules")
                     else:
                         print(f"we are about to save the PEFT modules")
                     save_peft_checkpoint(model, train_config.output_dir)
                     if train_config.enable_fsdp:
-                        if rank==0:
+                        if rank == 0:
                             print(f"PEFT modules are saved in {train_config.output_dir} directory")
                     else:
                         print(f"PEFT modules are saved in {train_config.output_dir} directory")
@@ -258,7 +258,7 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                             print(" Saving the FSDP model checkpoints and optimizer using SHARDED_STATE_DICT")
                             print("=====================================================")
 
-                    if not train_config.use_peft and  train_config.save_optimizer:
+                    if not train_config.use_peft and train_config.save_optimizer:
                         save_optimizer_checkpoint(
                             model, optimizer, rank, train_config, epoch=epoch
                         )
@@ -312,7 +312,7 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
 
     return results
 
-def evaluation(model,train_config, eval_dataloader, local_rank, tokenizer, wandb_run):
+def evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, wandb_run):
     """
     Evaluates the model on the given dataloader
 
@@ -384,10 +384,12 @@ def evaluation(model,train_config, eval_dataloader, local_rank, tokenizer, wandb
         print(f" {eval_ppl=} {eval_epoch_loss=}")
 
     if wandb_run:
-        wandb_run.log({
-                        'eval/perplexity': eval_ppl,
-                        'eval/loss': eval_epoch_loss,
-                    }, commit=False)
+        wandb_run.log(
+            {
+                'eval/perplexity': eval_ppl,
+                'eval/loss': eval_epoch_loss,
+            }, commit=False
+        )
 
     return eval_ppl, eval_epoch_loss, val_step_loss, val_step_perplexity
 

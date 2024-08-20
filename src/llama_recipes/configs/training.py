@@ -33,6 +33,7 @@ class train_config:
     use_peft: bool=False
     from_peft_checkpoint: str="" # if not empty and use_peft=True, will load the peft checkpoint and resume the fine-tuning on that checkpoint
     output_dir: str = "PATH/to/save/PEFT/model"
+    cache_dir: str = "~/.cache"
     freeze_layers: bool = False
     num_freeze_layers: int = 1
     quantization: str = None

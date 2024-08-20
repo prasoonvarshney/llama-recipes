@@ -10,7 +10,6 @@ class LlamaGuardVersion(Enum):
     LLAMA_GUARD_1 = "Llama Guard 1"
     LLAMA_GUARD_2 = "Llama Guard 2"
     LLAMA_GUARD_3 = "Llama Guard 3"
-    AEGIS_2 = "Aegis V2"
     
 class AgentType(Enum):
     AGENT = "Agent"

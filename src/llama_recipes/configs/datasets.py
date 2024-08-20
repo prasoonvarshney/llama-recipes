@@ -43,8 +43,26 @@ class llamaguard_toxicchat_dataset:
 
 @dataclass
 class vitaminc_dataset:
-    dataset: str = "vitaminc_dataset"
+    dataset: str = "vitaminc"
     train_split: str = "train"
-    test_split: str = "val"
-    train_data_path: str = "/lustre/fsw/portfolios/llmservice/users/prasoonv/workspace/grounding-guardrails/training_data/vitc_train.jsonl"
-    test_data_path: str = "/lustre/fsw/portfolios/llmservice/users/prasoonv/workspace/grounding-guardrails/training_data/vitc_val.jsonl"
+    test_split: str = "validation"
+    train_data_path: str = "/lustre/fsw/portfolios/llmservice/users/prasoonv/workspace/grounding-guardrails/training_data/vitc_train_10k.jsonl"
+    test_data_path: str = "/lustre/fsw/portfolios/llmservice/users/prasoonv/workspace/grounding-guardrails/training_data/vitc_val_1k.jsonl"
+
+
+@dataclass
+class ragtruth_dataset:
+    dataset: str = "ragtruth"
+    train_split: str = "train"
+    test_split: str = "validation"
+    train_data_path: str = "/lustre/fsw/portfolios/llmservice/users/prasoonv/workspace/grounding-guardrails/training_data/ragtruth_train_10k.jsonl"
+    test_data_path: str = "/lustre/fsw/portfolios/llmservice/users/prasoonv/workspace/grounding-guardrails/training_data/ragtruth_val_1k.jsonl"
+
+
+@dataclass
+class faithfulness_blended_dataset:
+    dataset: str = "faithfulness_blended"
+    train_split: str = "train"
+    test_split: str = "validation"
+    train_data_path: str = "/lustre/fsw/portfolios/llmservice/users/prasoonv/workspace/grounding-guardrails/training_data/blended_train_10k.jsonl"
+    test_data_path: str = "/lustre/fsw/portfolios/llmservice/users/prasoonv/workspace/grounding-guardrails/training_data/blended_val_1k.jsonl"

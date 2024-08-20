@@ -2,12 +2,13 @@
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
 
 from typing import List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
 
 @dataclass
 class wandb_config:
-    project: str = 'llama_recipes' # wandb project name
-    entity: Optional[str] = None # wandb entity name
+    project: str = 'llama_recipes'  # wandb project name
+    entity: Optional[str] = None  # wandb entity name
     job_type: Optional[str] = None
     tags: Optional[List[str]] = None
     group: Optional[str] = None

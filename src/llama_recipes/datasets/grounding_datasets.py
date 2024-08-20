@@ -6,16 +6,12 @@
 import copy
 import datasets
 import json
-import pandas as pd
 from transformers import AutoTokenizer
 
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
 
 # For dataset details visit: https://crfm.stanford.edu/2023/03/13/alpaca.html
-
-import copy
-import json
 
 import torch
 from torch.utils.data import Dataset
@@ -27,7 +23,7 @@ class GroundingDataset(Dataset):
         if partition == "train":
             file_path = dataset_config.train_data_path
 
-        elif partition == "validation":
+        elif partition == "validation" or partition == "test":
             file_path = dataset_config.test_data_path
 
         self.tokenizer = tokenizer
@@ -41,45 +37,41 @@ class GroundingDataset(Dataset):
     def __getitem__(self, index):
         IGNORE_INDEX = -100  # The default setting in CrossEntropyLoss
 
-        prompt = self.annotated_data[index]["prompt"]
+        prompt = self.annotated_data[index]['prompt']
+        completion = self.annotated_data[index]['completion']
 
-        if not prompt.startswith("<|begin_of_text|><|start_header_id|>user<|end_header_id|>"):
-            prompt = "<|begin_of_text|><|start_header_id|>user<|end_header_id|> " + prompt
-        
-        if 
-        
-        # if not self.tokenizer.encode(prompt)[0] == self.tokenizer.bos_token_id:
-        #     prompt = self.tokenizer.bos_token + prompt
-        
-        # encoded = prompt + self.annotated_data[index]['completion']
-        # prompt = torch.tensor(
-        #     self.tokenizer.encode(prompt), dtype=torch.int64
-        # )
-        # encoded = self.tokenizer.encode(encoded)
-        if index == 0:  # perform a validation check on the first encoded
-            assert "prompt" in self.annotated_data[index]
-            assert "completion" in self.annotated_data[index]
-            assert self.annotated_data[index]["prompt"].startswith("<|begin_of_text|><|start_header_id|>")
-            assert self.annotated_data[index]["text"].endswith("<|eot_id|>")
-            
-        encoded = self.tokenizer.encode(self.annotated_data[index]["text"])
-        
+        prompt = self.tokenizer.apply_chat_template([
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ], tokenize=False, add_generation_prompt=True)
+        completion = completion + " <|eot_id|>"
+        prompt_encoded = self.tokenizer.encode(prompt, add_special_tokens=False)
+        completion_encoded = self.tokenizer.encode(completion, add_special_tokens=False)
+        encoded = torch.cat([
+            torch.tensor(prompt_encoded, dtype=torch.int64),
+            torch.tensor(completion_encoded, dtype=torch.int64)
+        ])
+        # if index == 0:  # perform a validation check on the first encoded
+        # Llama 3.1 specific assertions
+        assert prompt.startswith('<|begin_of_text|><|start_header_id|>')
+        assert prompt.endswith("<|end_header_id|>\n\n")
+        assert completion.endswith("<|eot_id|>")
+        # General assertions
         assert encoded[0] == self.tokenizer.bos_token_id, "BOS token not correctly added"
         assert encoded[-1] == self.tokenizer.eos_token_id, "EOS token not correctly added"
 
-        # if encoded[0] != self.tokenizer.bos_token_id:
-        #     encoded = [self.tokenizer.bos_token_id] + encoded
-        # encoded.append(self.tokenizer.eos_token_id)
-        encoded = torch.tensor(
-            encoded, dtype=torch.int64
-        )
         labels = copy.deepcopy(encoded)
-        labels[: len(prompt)] = -1
+        labels[: len(prompt_encoded)] = -1
         encoded_mask = encoded.ge(0)
         label_mask = labels.ge(0)
         encoded[~encoded_mask] = 0
         labels[~label_mask] = IGNORE_INDEX
 
+        assert len(encoded) == len(labels), "Encoded and labels should have the same length"
+        assert encoded[-1] == self.tokenizer.eos_token_id == labels[-1], "EOS token not correctly added"
+        assert encoded[-3] == labels[-3], "Completion token should be the same in both encoded and labels"
         return {
             "input_ids": encoded.tolist(),
             "labels": labels.tolist(),
