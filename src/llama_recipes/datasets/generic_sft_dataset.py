@@ -27,7 +27,7 @@ class GenericSFTDataset(Dataset):
         doesn't backpropagate errors for those tokens.
     """
     def __init__(self, dataset_config, tokenizer: AutoTokenizer, partition="train"):
-
+        self.name = dataset_config.name
         if partition == "train":
             file_path = dataset_config.train_data_path
 

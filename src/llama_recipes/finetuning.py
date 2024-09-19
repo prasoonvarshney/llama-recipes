@@ -3,9 +3,10 @@
 
 from collections import Counter
 import os
-
+import copy
 import dataclasses
 import fire
+import math
 import random
 import torch
 import torch.optim as optim
@@ -16,7 +17,7 @@ from torch.distributed.fsdp import (
 )
 
 from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import StepLR, CosineAnnealingWarmRestarts
 from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
@@ -52,6 +53,38 @@ from llama_recipes.utils.train_utils import (
 )
 from accelerate.utils import is_xpu_available
 from warnings import warn
+
+
+class CosineAnnealingWarmRestartsDecay(CosineAnnealingWarmRestarts):
+    def __init__(
+        self, optimizer, T_0, T_mult=1, eta_min=0, last_epoch=-1, verbose=False, decay=1
+    ):
+        super().__init__(
+            optimizer, T_0, T_mult=T_mult, eta_min=eta_min, last_epoch=last_epoch, verbose=verbose
+        )
+        self.decay = decay
+        self.initial_lrs = self.base_lrs
+
+    def step(self, epoch=None):
+        if epoch is None:
+            if self.T_cur + 1 == self.T_i:
+                if self.verbose:
+                    print("multiplying base_lrs by {:.4f}".format(self.decay))
+                self.base_lrs = [base_lr * self.decay for base_lr in self.base_lrs]
+        else:
+            if epoch < 0:
+                raise ValueError("Expected non-negative epoch, but got {}".format(epoch))
+            if epoch >= self.T_0:
+                if self.T_mult == 1:
+                    n = int(epoch / self.T_0)
+                else:
+                    n = int(math.log((epoch / self.T_0 * (self.T_mult - 1) + 1), self.T_mult))
+            else:
+                n = 0
+
+            self.base_lrs = [initial_lrs * (self.decay**n) for initial_lrs in self.initial_lrs]
+
+        super().step(epoch)
 
 
 def setup_wandb(train_config, fsdp_config, run_name, **kwargs):
@@ -125,7 +158,10 @@ def main(**kwargs):
     )
 
     # Load the tokenizer and add special tokens
-    tokenizer = AutoTokenizer.from_pretrained(train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name)
+    tokenizer = AutoTokenizer.from_pretrained(
+        train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name,
+        cache_dir=train_config.cache_dir,
+    )
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
@@ -210,7 +246,7 @@ def main(**kwargs):
     )
 
     wandb_run = None
-    descriptive_run_identifier = f"{train_config.model_name.split('/')[-1].lower()}{'_q8' if train_config.quantization else ''}_bs{train_config.batch_size_training}{train_config.batching_strategy}_data-{train_config.dataset}{len(dataset_train)}-{len(dataset_val)}_epochs{train_config.num_epochs}_initlr{train_config.lr}"
+    descriptive_run_identifier = f"{train_config.model_name.split('/')[-1].lower()}{'_q8' if train_config.quantization else ''}_bs{train_config.batch_size_training}{train_config.batching_strategy}_data-{dataset_config.name}{len(dataset_train)}-{len(dataset_val)}_epochs{train_config.num_epochs}_initlr{train_config.lr}_{'steplr' if train_config.lr_scheduler == 'linear' else 'cosine'}{train_config.gamma if train_config.lr_scheduler == 'linear' else ('T0=0.2-Tmult=2-LRDecay=' + str(train_config.gamma))}_peft"
     if train_config.use_wandb:
         if not train_config.enable_fsdp or rank == 0:
             wandb_run = setup_wandb(
@@ -257,6 +293,7 @@ def main(**kwargs):
             print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
 
     # Initialize the optimizer and learning rate scheduler
+    print(f"--> FSDP Config Optimizer: {fsdp_config.optimizer}, LR: {train_config.lr}, Weight Decay: {train_config.weight_decay}, Pure BF16: {fsdp_config.pure_bf16}")
     if fsdp_config.pure_bf16 and fsdp_config.optimizer == "anyprecision":
         optimizer = AnyPrecisionAdamW(
             model.parameters(),
@@ -272,7 +309,10 @@ def main(**kwargs):
             lr=train_config.lr,
             weight_decay=train_config.weight_decay,
         )
-    scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
+    if train_config.lr_scheduler == "linear":
+        scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
+    else:
+        scheduler = CosineAnnealingWarmRestartsDecay(optimizer, T_0=int(0.2 * len(train_dataloader)), T_mult=2, eta_min=1e-7, last_epoch=-1, decay=train_config.gamma)
     # Start the training process
     results = train(
         model,

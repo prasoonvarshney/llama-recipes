@@ -97,7 +97,7 @@ def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_sch
     train_prep = []
     train_loss = []
     val_prep = []
-    val_loss =[]
+    val_loss = []
 
     if train_config.save_metrics:
         if not os.path.exists(train_config.output_dir):
@@ -114,6 +114,7 @@ def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_sch
     best_val_loss = float("inf")
     total_train_steps = 0
     max_steps_reached = False  # Flag to indicate max training steps reached
+
     # Start the training loop
     for epoch in range(train_config.num_epochs):
         # stop when the maximum number of training steps is reached
@@ -196,6 +197,8 @@ def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_sch
 
                     if train_config.save_metrics:
                         save_to_json(metrics_filename, train_step_loss, train_loss, train_step_perplexity, train_prep, val_step_loss, val_loss, val_step_perplexity, val_prep)
+                    if train_config.lr_scheduler == "cosine":
+                        lr_scheduler.step()
                 pbar.close()
 
         epoch_end_time = time.perf_counter()-epoch_start_time
@@ -217,9 +220,12 @@ def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_sch
             memtrace.print_stats()
 
         # Update the learning rate as needed
-        lr_scheduler.step()
+        if train_config.lr_scheduler == "linear":
+            lr_scheduler.step()
         if train_config.run_validation:
-            eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, wandb_run)
+            eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation(
+                model, train_config, eval_dataloader, local_rank, tokenizer, wandb_run, epoch=epoch
+            )
             if train_config.save_metrics:
                 val_step_loss.extend(temp_val_loss)
                 val_step_perplexity.extend(temp_step_perplexity)
@@ -311,7 +317,8 @@ def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_sch
 
     return results
 
-def evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, wandb_run):
+
+def evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, wandb_run, epoch=-1):
     """
     Evaluates the model on the given dataloader
 
@@ -385,11 +392,11 @@ def evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, wand
     if wandb_run:
         wandb_run.log(
             {
+                'train/epoch': epoch + 1,
                 'eval/perplexity': eval_ppl,
                 'eval/loss': eval_epoch_loss,
             }, commit=False
         )
-
     return eval_ppl, eval_epoch_loss, val_step_loss, val_step_perplexity
 
 def freeze_transformer_layers(model, num_layer):
