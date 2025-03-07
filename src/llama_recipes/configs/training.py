@@ -11,6 +11,7 @@ class train_config:
     enable_fsdp: bool=False
     low_cpu_fsdp: bool=False
     run_validation: bool=True
+    eval_before_training: bool=True
     batch_size_training: int=4
     batching_strategy: str="packing"  # alternative: padding
     context_length: int=4096
